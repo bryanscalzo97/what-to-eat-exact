@@ -1,0 +1,116 @@
+// What to Eat?: a food roulette. Options live in app.ts
+// (app:/data/foods.json). The wheel is SVG slices; CSS rotate spins it.
+shape Item
+  id: string
+  title: string
+
+shape Reply
+  ok: bool
+  error: string
+
+shape Time
+  seed: number
+
+fn pi(): number = 3.141592653589793
+fn rad(deg: number): number = deg * pi() / 180
+fn px(cx: number, r: number, deg: number): number = cx + r * cos(rad(deg))
+fn py(cy: number, r: number, deg: number): number = cy + r * sin(rad(deg))
+fn sliceStart(i: number, n: number): number = -90 + i * 360 / n
+fn sliceEnd(i: number, n: number): number = -90 + (i + 1) * 360 / n
+fn sliceMid(i: number, n: number): number = -90 + (i + 0.5) * 360 / n
+fn largeArc(start: number, end: number): number = end - start > 180 ? 1 : 0
+fn wedge(cx: number, cy: number, r: number, start: number, end: number): string = `M ${cx} ${cy} L ${px(cx, r, start)} ${py(cy, r, start)} A ${r} ${r} 0 ${largeArc(start, end)} 1 ${px(cx, r, end)} ${py(cy, r, end)} Z`
+fn wrap360(a: number): number = ((a % 360) + 360) % 360
+fn targetMod(k: number, n: number): number = wrap360(0 - (k + 0.5) * 360 / n)
+fn sliceColor(i: number): string = i % 8 == 0 ? "#C2410C" : i % 8 == 1 ? "#B45309" : i % 8 == 2 ? "#A16207" : i % 8 == 3 ? "#15803D" : i % 8 == 4 ? "#1D4ED8" : i % 8 == 5 ? "#7E22CE" : i % 8 == 6 ? "#BE185D" : "#0F766E"
+fn turn(x: number): number = (x % 65536) * 32768 + floor(x / 65536)
+fn stir(x: number): number = turn((x * (16807 + floor(x / 65536))) % 2147483647)
+fn roll(seed: number, k: number, n: number): number = floor(stir(stir(stir(1 + (stir(stir(1 + seed % 2147483646)) + k) % 2147483646))) * n / 2147483647)
+
+routes nav
+  home "/"
+
+component Roulette
+  state draft = ""
+  state angle = 0
+  state spins = 0
+  state spinning = false
+  state pending = ""
+  state winner = ""
+  resource foods = loadFoods() as shape Item[] else empty()
+  resource time = exactTime() as shape Time
+  mutation added as shape Reply refreshes foods then afterAdd
+  mutation removed as shape Reply refreshes foods
+  derive addError = match added { case some(r) => r.error, case none => "" }
+
+  task land when spinning
+    after(3000, finishSpin)
+
+  action edit(v: string)
+    draft = v
+  action add
+    if draft.trim() != ""
+      send added = addFood(draft.trim())
+  action afterAdd
+    if addError == ""
+      draft = ""
+  action remove(id: string)
+    send removed = removeFood(id)
+  action spin
+    if foods.length > 0 and not spinning
+      let n = foods.length
+      let k = roll(time.seed, spins, n)
+      let currentMod = wrap360(angle)
+      let want = targetMod(k, n)
+      let raw = wrap360(want - currentMod)
+      let delta = raw == 0 ? 360 : raw
+      angle = angle + delta + 1440
+      pending = match foods.at(k) { case some(f) => f.title, case none => "" }
+      spins = spins + 1
+      spinning = true
+      haptic("selection")
+  action finishSpin
+    winner = pending
+    spinning = false
+    haptic("success")
+
+  view
+    main testId="root" navigationKey=`${top(nav).id}` navigationBack="back" width="100%" height="100%"
+      for e in stack(nav) key=e.id
+        column navigationKey=`${e.id}` navigationScroll="foods" position="absolute" inset=0 display="flex" flex-direction="column"
+          header display="flex" align-items="center"
+            text "What to Eat?" role="heading" aria-level=1 flex=1
+          column align-items="center" gap=12 padding="16px 16px 8px"
+            column width=240 height=240 position="relative" align-items="center" justify-content="center" testId="wheel-box"
+              svg width=240 height=240 viewBox="0 0 240 240" rotate=angle transform-origin="center" transition="rotate 3000ms cubic-bezier(0.15, 0.8, 0.15, 1)" testId="wheel"
+                if foods.length == 0
+                  circle cx=120 cy=120 r=114 fill="#E5E5EA"
+                else
+                  if foods.length == 1
+                    circle cx=120 cy=120 r=114 fill=sliceColor(0)
+                    text (match foods.at(0) { case some(f) => f.title, case none => "" }) x=120 y=88 text-anchor="middle" dominant-baseline="middle" font-size=13 font-weight=700 fill="#ffffff"
+                  else
+                    for f, i in foods key=f.id
+                      path d=wedge(120, 120, 114, sliceStart(i, foods.length), sliceEnd(i, foods.length)) fill=sliceColor(i) stroke="#ffffff" stroke-width=2
+                      text f.title x=px(120, 68, sliceMid(i, foods.length)) y=py(120, 68, sliceMid(i, foods.length)) text-anchor="middle" dominant-baseline="middle" font-size=11 font-weight=700 fill="#ffffff"
+                  circle cx=120 cy=120 r=26 fill="#ffffff" stroke="#E5E5EA" stroke-width=1
+              svg width=240 height=240 position="absolute" top=0 left=0 testId="pointer"
+                polygon points="120,4 108,24 132,24" fill="#1c1c1e" stroke="#ffffff" stroke-width=2 stroke-linejoin="round"
+            text (spinning ? "Spinning…" : (winner == "" ? "Tap Spin to pick" : `Today: ${winner}`)) font-size="1.5rem" font-weight=700 text-align="center" testId="result"
+            button press=spin disabled=(foods.length == 0 or spinning) buttonStyle="filled" testId="spin"
+              text (spinning ? "Spinning…" : "Spin")
+          list id="foods" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0 testId="app"
+            section
+              row gap=8 align-items="center"
+                column flex=1 min-width=0 gap=4
+                  input value=draft input=edit submit=add placeholder="Add a food" aria-label="New food" testId="draft"
+                  if addError != "" and not pending(added)
+                    text addError font="-exact-footnote" color="-exact-system-red" testId="add-error"
+                button press=add disabled=(draft.trim() == "") buttonStyle="filled" testId="add"
+                  text "Add"
+            section
+              for f in foods key=f.id
+                row delete=remove(f.id) testId=`item-${f.id}`
+                  text f.title flex=1 testId=`item-${f.id}-label`
+              footer
+                text (foods.length == 0 ? "Add at least one food." : `${foods.length} ${foods.length == 1 ? "option" : "options"}`) testId="count"

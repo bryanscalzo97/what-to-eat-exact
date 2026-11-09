@@ -1,0 +1,25 @@
+seed 2
+
+test "an option can be added"
+  type "draft" "Tacos"
+  tap "add"
+  clock data
+  expect tree has "item-7"
+  expect text "item-7-label" == "Tacos"
+  expect text "count" == "7 options"
+
+test "an option can be removed"
+  tap "item-1-delete"
+  clock data
+  expect tree missing "item-1"
+  expect tree has "item-2"
+  expect text "item-2-label" == "BBQ"
+  expect text "count" == "5 options"
+
+test "a spin picks one of the options and shows the result"
+  expect text "result" == "Tap Spin to pick"
+  tap "spin"
+  expect text "result" == "Spinning…"
+  clock +3100
+  expect text "result" == "Today: BBQ"
+  expect state winner == "BBQ"
